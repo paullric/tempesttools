@@ -29,7 +29,7 @@ FILES= Announce.cpp \
 	   ShpFile.cpp \
 	   PNGImage.cpp
 
-LIB_TARGET= libvisbase.a
+LIB_TARGET= libtoolsbase.a
 
 .PHONY: all clean
 
