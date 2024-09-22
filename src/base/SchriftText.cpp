@@ -17,6 +17,8 @@
 #include "SchriftText.h"
 #include "Exception.h"
 
+#include <cstring>
+
 ///////////////////////////////////////////////////////////////////////////////
 
 SchriftText::SchriftText(
