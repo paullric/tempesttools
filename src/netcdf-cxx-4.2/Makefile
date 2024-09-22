@@ -5,10 +5,10 @@
 # file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
 
 # Base directory.
-TEMPESTVISDIR= ../..
+TEMPESTTOOLSDIR= ../..
 
 # Load Makefile framework. 
-include $(TEMPESTVISDIR)/mk/framework.make
+include $(TEMPESTTOOLSDIR)/mk/framework.make
 
 FILES= ncvalues.cpp netcdf.cpp
 
