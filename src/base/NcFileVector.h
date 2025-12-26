@@ -133,25 +133,16 @@ public:
 	}
 
 	///	<summary>
+	///		Get the concatenated list of filenames.
+	///	</summary>
+	std::string GetConcatenatedFilenames() const;
+
+	///	<summary>
 	///		Get the FileType at the specified position.
 	///	</summary>
 	const FileType & GetFileType(size_t pos) const {
 		_ASSERT(pos < m_vecFilenames.size());
 		return m_vecFileType[pos];
-	}
-
-	///	<summary>
-	///		Get the NcFileVector as a string.
-	///	</summary>
-	std::string ToString() const {
-		std::string strNcFileVectorString;
-		for (size_t f = 0; f < m_vecFilenames.size(); f++) {
-			strNcFileVectorString += m_vecFilenames[f];
-			if (f != m_vecFilenames.size()-1) {
-				strNcFileVectorString += ";";
-			}
-		}
-		return strNcFileVectorString;
 	}
 
 public:

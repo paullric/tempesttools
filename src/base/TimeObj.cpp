@@ -131,9 +131,10 @@ bool Time::operator>(const Time & time) const {
 void Time::VerifyTime() {
 
 	// Verification only for known CalendarTypes
-	if ((m_eCalendarType == CalendarNoLeap) || 
+	if ((m_eCalendarType == CalendarNoLeap) ||
 		(m_eCalendarType == CalendarStandard) ||
 		(m_eCalendarType == CalendarGregorian) ||
+		(m_eCalendarType == CalendarJulian) ||
 		(m_eCalendarType == Calendar360Day) ||
 		(m_eCalendarType == Calendar365Day)
 	) {
@@ -141,15 +142,21 @@ void Time::VerifyTime() {
 			= {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
 		if ((m_eCalendarType == CalendarStandard) ||
-			(m_eCalendarType == CalendarGregorian)
+		    (m_eCalendarType == CalendarGregorian)
 		) {
-			if ((m_iYear % 4) == 0) {
-				nDaysPerMonth[1] = 29;
-				if (((m_iYear % 100) == 0) && ((m_iYear % 400) != 0)) {
-					nDaysPerMonth[1] = 28;
+				if ((m_iYear % 4) == 0) {
+						nDaysPerMonth[1] = 29;
+						if (((m_iYear % 100) == 0) && ((m_iYear % 400) != 0)) {
+								nDaysPerMonth[1] = 28;
+						}
 				}
-			}
+
+		} else if (m_eCalendarType == CalendarJulian) {
+				if ((m_iYear % 4) == 0) {
+					nDaysPerMonth[1] = 29;
+				}
 		}
+
 		if (m_eCalendarType == Calendar360Day) {
 			for (int i = 0; i < 12; i++) {
 				nDaysPerMonth[i] = 30;
@@ -184,25 +191,30 @@ void Time::NormalizeTime() {
 	}
 
 	// Normalization only for known CalendarTypes
-	if ((m_eCalendarType == CalendarNoLeap) || 
+	if ((m_eCalendarType == CalendarNoLeap) ||
 		(m_eCalendarType == CalendarStandard) ||
 		(m_eCalendarType == CalendarGregorian) ||
+		(m_eCalendarType == CalendarJulian) ||
 		(m_eCalendarType == Calendar360Day) ||
 		(m_eCalendarType == Calendar365Day)
 	) {
 		int nDaysPerMonth[]
 			= {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
-		if ((m_eCalendarType == CalendarStandard) ||
-			(m_eCalendarType == CalendarGregorian)
-		) {
-			if ((m_iYear % 4) == 0) {
-				nDaysPerMonth[1] = 29;
-				if (((m_iYear % 100) == 0) && ((m_iYear % 400) != 0)) {
-					nDaysPerMonth[1] = 28;
-				}
-			}
-		}
+    if ((m_eCalendarType == CalendarStandard) ||
+        (m_eCalendarType == CalendarGregorian)
+    ) {
+        if ((m_iYear % 4) == 0) {
+            nDaysPerMonth[1] = 29;
+            if (((m_iYear % 100) == 0) && ((m_iYear % 400) != 0)) {
+                nDaysPerMonth[1] = 28;
+            }
+        }
+    } else if (m_eCalendarType == CalendarJulian) {
+        if ((m_iYear % 4) == 0) {
+            nDaysPerMonth[1] = 29;
+        }
+    }
 		if (m_eCalendarType == Calendar360Day) {
 			for (int i = 0; i < 12; i++) {
 				nDaysPerMonth[i] = 30;
@@ -215,7 +227,7 @@ void Time::NormalizeTime() {
 			nAddedSeconds = m_iMicroSecond / 1000000;
 
 		} else if (m_iMicroSecond < 0) {
-			nAddedSeconds = - (1000000 - m_iSecond) / 1000000;
+			nAddedSeconds = - (1000000 - m_iSecond - 1) / 1000000;
 		}
 		m_iMicroSecond -= nAddedSeconds * 1000000;
 		m_iSecond += nAddedSeconds;
@@ -226,7 +238,7 @@ void Time::NormalizeTime() {
 			nAddedDays = m_iSecond / 86400;
 
 		} else if (m_iSecond < 0) {
-			nAddedDays = - (86400 - m_iSecond) / 86400;
+			nAddedDays = - (86400 - m_iSecond - 1) / 86400;
 		}
 
 		m_iSecond -= nAddedDays * 86400;
@@ -237,7 +249,7 @@ void Time::NormalizeTime() {
 		if (m_iMonth >= 12) {
 			nAddedYears = m_iMonth / 12;
 		} else if (m_iMonth < 0) {
-			nAddedYears = - (12 - m_iMonth) / 12;
+			nAddedYears = - (12 - m_iMonth - 1) / 12;
 		}
 		m_iMonth -= nAddedYears * 12;
 		m_iYear += nAddedYears;
@@ -416,12 +428,18 @@ int Time::DayNumber() const {
 
 	} else if (
 		(m_eCalendarType == CalendarStandard) ||
-		(m_eCalendarType == CalendarGregorian)
+		(m_eCalendarType == CalendarGregorian) ||
+		(m_eCalendarType == CalendarJulian)
 	) {
 		int nM = (m_iMonth + 10) % 12;
 		int nY = m_iYear - nM/10;
-		int nDay = 365 * nY + nY / 4 - nY / 100 + nY / 400
-			+ (nM * 306 + 5) / 10 + m_iDay;
+    int nDay;
+    if (m_eCalendarType == CalendarJulian) {
+        nDay = 365 * nY + nY / 4 + (nM * 306 + 5) / 10 + m_iDay;
+    } else {
+        nDay = 365 * nY + nY / 4 - nY / 100 + nY / 400
+             + (nM * 306 + 5) / 10 + m_iDay;
+    }
 
 		return nDay;
 
@@ -464,6 +482,9 @@ bool Time::IsLeapYear() const {
 		return false;
 	}
 	if ((m_iYear % 4) == 0) {
+		if (m_eCalendarType == CalendarJulian) {
+			return true;
+		}
 		if (((m_iYear % 100) == 0) && ((m_iYear % 400) != 0)) {
 			return false;
 		}
@@ -893,7 +914,7 @@ void Time::FromFormattedString(
 						strFormattedTime.c_str());
 				}
 
-			// Record second 
+			// Record second
 			} else if (strFormattedTime[i] == 's') {
 				if (szSecond == NULL) {
 					szSecond = &(strFormattedTime[j]);
@@ -903,7 +924,7 @@ void Time::FromFormattedString(
 						strFormattedTime.c_str());
 				}
 
-			// Record microsecond 
+			// Record microsecond
 			} else if (strFormattedTime[i] == 'u') {
 				if (szMicroSecond == NULL) {
 					szMicroSecond = &(strFormattedTime[j]);
@@ -973,7 +994,7 @@ void Time::FromFormattedString(
 			_EXCEPTION1("Malformed time string (%s): "
 				"Dangling values not allowed in Free formatting",
 				strFormattedTime.c_str());
-		} 
+		}
 	}
 
 	// Type
@@ -1222,20 +1243,114 @@ double Time::GetCFCompliantUnitsOffsetDouble(
 ///////////////////////////////////////////////////////////////////////////////
 
 std::string Time::GetCalendarName() const {
-	if (m_eCalendarType == CalendarNone) {
-		return std::string("none");
-	} else if (m_eCalendarType == CalendarNoLeap) {
-		return std::string("noleap");
-	} else if (m_eCalendarType == CalendarStandard) {
-		return std::string("standard");
-	} else if (m_eCalendarType == CalendarGregorian) {
-		return std::string("gregorian");
-	} else if (m_eCalendarType == Calendar360Day) {
-		return std::string("360_day");
-	} else if (m_eCalendarType == Calendar365Day) {
-		return std::string("365_day");
-	} else {
-		_EXCEPTIONT("Invalid CalendarType");
+	return StringFromCalendarType(m_eCalendarType);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+std::string Time::GetTimeTypeString() const {
+	return StringFromTimeType(m_eTimeType);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+std::string Time::GetAsYAMLList() const {
+	char szYAMLList[256];
+	snprintf(szYAMLList, 256, "[%i,%i,%i,%i,%i,%s,%s]",
+		m_iYear,
+		m_iMonth,
+		m_iDay,
+		m_iSecond,
+		m_iMicroSecond,
+		GetCalendarName().c_str(),
+		GetTimeTypeString().c_str());
+	return std::string(szYAMLList);
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+void Time::FromYAMLList(
+	const std::string & strYAMLTime
+) {
+	enum ParseState {
+		ParseState_Year,
+		ParseState_Month,
+		ParseState_Day,
+		ParseState_Second,
+		ParseState_MicroSecond,
+		ParseState_Calendar,
+		ParseState_TimeType,
+		ParseState_Done
+	};
+
+	if (strYAMLTime.length() < 2) {
+		_EXCEPTION1("Invalid YAML time string \"%s\"", strYAMLTime.c_str());
+	}
+	if (strYAMLTime[0] != '[') {
+		_EXCEPTION1("Invalid YAML time string \"%s\"", strYAMLTime.c_str());
+	}
+	if (strYAMLTime[strYAMLTime.length()-1] != ']') {
+		_EXCEPTION1("Invalid YAML time string \"%s\"", strYAMLTime.c_str());
+	}
+
+	ParseState eState = ParseState_Year;
+	int ixLast = 1;
+	int ix = 1;
+	for (; ix != strYAMLTime.length(); ix++) {
+		if ((strYAMLTime[ix] == ',') || (strYAMLTime[ix] == ']')) {
+			if (ix == ixLast) {
+				_EXCEPTION1("Invalid YAML time string \"%s\"", strYAMLTime.c_str());
+			}
+			std::string strSubStr = strYAMLTime.substr(ixLast, ix-ixLast-1);
+			STLStringHelper::RemoveWhitespaceInPlace(strSubStr);
+			ixLast = ix+1;
+
+			if ((eState == ParseState_Year) ||
+			    (eState == ParseState_Month) ||
+			    (eState == ParseState_Day) ||
+			    (eState == ParseState_Second) ||
+			    (eState == ParseState_MicroSecond)
+			) {
+				if (!STLStringHelper::IsInteger(strSubStr)) {
+					_EXCEPTION1("Invalid YAML time string \"%s\"", strYAMLTime.c_str());
+				}
+			}
+
+			if (eState == ParseState_Year) {
+				m_iYear = stoi(strSubStr);
+				eState = ParseState_Month;
+
+			} else if (eState == ParseState_Month) {
+				m_iMonth = stoi(strSubStr);
+				eState = ParseState_Day;
+
+			} else if (eState == ParseState_Day) {
+				m_iDay = stoi(strSubStr);
+				eState = ParseState_Second;
+
+			} else if (eState == ParseState_Second) {
+				m_iSecond = stoi(strSubStr);
+				eState = ParseState_MicroSecond;
+
+			} else if (eState == ParseState_MicroSecond) {
+				m_iMicroSecond = stoi(strSubStr);
+				eState = ParseState_Calendar;
+
+			} else if (eState == ParseState_Calendar) {
+				m_eCalendarType = CalendarTypeFromString(strSubStr);
+				eState = ParseState_TimeType;
+
+			} else if (eState == ParseState_TimeType) {
+				m_eTimeType = TimeTypeFromString(strSubStr);
+				eState = ParseState_Done;
+
+			} else if (eState == ParseState_Done) {
+				_EXCEPTION1("Invalid YAML time string \"%s\"", strYAMLTime.c_str());
+			}
+		}
+	}
+	if (eState != ParseState_Done) {
+		_EXCEPTION1("Invalid YAML time string \"%s\"", strYAMLTime.c_str());
 	}
 }
 

@@ -23,6 +23,7 @@
 #include "kdtree.h"
 #include "Constants.h"
 #include "CoordTransforms.h"
+#include "Units.h"
 
 #include <cstdlib>
 #include <set>
@@ -97,6 +98,9 @@ DataOp * DataOpManager::Add(
 	} else if (strName == "_COND") {
 		return Add(new DataOp_COND);
 
+	} else if (strName == "_EQUALS") {
+		return Add(new DataOp_EQUALS);
+
 	} else if (strName == "_SQRT") {
 		return Add(new DataOp_SQRT);
 	
@@ -105,6 +109,12 @@ DataOp * DataOpManager::Add(
 
 	} else if (strName == "_LAT") {
 		return Add(new DataOp_LAT);
+
+	} else if (strName == "_LON") {
+		return Add(new DataOp_LON);
+
+	} else if (strName == "_AREA") {
+		return Add(new DataOp_AREA);
 
 	} else if (strName == "_F") {
 		return Add(new DataOp_F);
@@ -368,6 +378,18 @@ DataOp * DataOpManager::Add(
 
 		return Add(new DataOp_MEAN(strName, dDist));
 
+	// Chill hours calculator using tasmin and tasmax
+	} else if (strName == "_DAILYCHILLHOURS") {
+		return Add(new DataOp_DAILYCHILLHOURS);
+
+	// Relative humidity using T2d and T2m
+	} else if (strName == "_RELHUMFROMTDTA") {
+		return Add(new DataOp_RELHUMFROMTDTA);
+
+	// VPD from Ta and RH
+	} else if (strName == "_VPDFROMTAHUR") {
+		return Add(new DataOp_VPDFROMTAHUR);
+
 	} else {
 		_EXCEPTION1("Invalid DataOp \"%s\"", strName.c_str());
 	}
@@ -401,6 +423,79 @@ bool DataOp::Apply(
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+
+std::string DataOp::GetUnits_Common(
+	const std::vector<std::string> & vecUnits
+) {
+	if (vecUnits.size() == 0) {
+		return std::string("");
+	}
+	for (size_t i = 1; i < vecUnits.size(); i++) {
+		if (vecUnits[i] != vecUnits[0]) {
+			return std::string("");
+		}
+	}
+	return vecUnits[0];
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+std::string DataOp::GetUnits(
+	const std::vector<std::string> & vecUnits
+) {
+	return "";
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+bool DataOp::HasFillValue(
+	const std::vector<DataArray1D<float> const *> vecArgData
+) {
+	for (int i = 0; i < vecArgData.size(); i++) {
+		if (vecArgData[i] != NULL) {
+			if (vecArgData[i]->HasFillValue()) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+float DataOp::GetFillValue_Common(
+	const std::vector<DataArray1D<float> const *> vecArgData
+) {
+	float dCommonFillValue = DefaultFillValue;
+	bool fCommonFillValueDefined = false;
+	for (int i = 0; i < vecArgData.size(); i++) {
+		if (vecArgData[i] != NULL) {
+			if (vecArgData[i]->HasFillValue()) {
+				if (!fCommonFillValueDefined) {
+					dCommonFillValue = vecArgData[i]->GetFillValue();
+					fCommonFillValueDefined = true;
+
+				} else if (dCommonFillValue != vecArgData[i]->GetFillValue()) {
+					dCommonFillValue = DefaultFillValue;
+				}
+			}
+		}
+	}
+	if (!fCommonFillValueDefined) {
+		return DefaultFillValue;
+	}
+	return dCommonFillValue;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+float DataOp::GetFillValue(
+	const std::vector<DataArray1D<float> const *> vecArgData
+) {
+	return DefaultFillValue;
+}
+
+///////////////////////////////////////////////////////////////////////////////
 // DataOp_VECMAG
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -426,10 +521,27 @@ bool DataOp_VECMAG::Apply(
 	const DataArray1D<float> & dataLeft  = *(vecArgData[0]);
 	const DataArray1D<float> & dataRight = *(vecArgData[1]);
 
-	for (int i = 0; i < dataout.GetRows(); i++) {
-		dataout[i] =
-			sqrt(dataLeft[i] * dataLeft[i]
-				+ dataRight[i] * dataRight[i]);
+	dataout.SetFillValue(DefaultFillValue);
+
+	if (dataLeft.HasFillValue() || dataRight.HasFillValue()) {
+		for (int i = 0; i < dataout.GetRows(); i++) {
+			if ((dataLeft[i] == dataLeft.GetFillValue()) ||
+			    (dataRight[i] == dataRight.GetFillValue())
+			) {
+				dataout[i] = dataout.GetFillValue();
+			} else {
+				dataout[i] =
+					sqrt(dataLeft[i] * dataLeft[i]
+						+ dataRight[i] * dataRight[i]);
+			}
+		}
+
+	} else {
+		for (int i = 0; i < dataout.GetRows(); i++) {
+			dataout[i] =
+				sqrt(dataLeft[i] * dataLeft[i]
+					+ dataRight[i] * dataRight[i]);
+		}
 	}
 
 	return true;
@@ -460,10 +572,23 @@ bool DataOp_ABS::Apply(
 
 	const DataArray1D<float> & data = *(vecArgData[0]);
 
-	for (int i = 0; i < dataout.GetRows(); i++) {
-		dataout[i] = fabs(data[i]);
+	dataout.SetFillValue(DefaultFillValue);
+
+	if (data.HasFillValue()) {
+		for (int i = 0; i < dataout.GetRows(); i++) {
+			if (data[i] == data.GetFillValue()) {
+				dataout[i] = dataout.GetFillValue();
+			} else {
+				dataout[i] = fabs(data[i]);
+			}
+		}
+
+	} else {
+		for (int i = 0; i < dataout.GetRows(); i++) {
+			dataout[i] = fabs(data[i]);
+		}
 	}
-	
+
 	return true;
 }
 
@@ -492,16 +617,35 @@ bool DataOp_SIGN::Apply(
 
 	const DataArray1D<float> & data = *(vecArgData[0]);
 
-	for (int i = 0; i < dataout.GetRows(); i++) {
-		if (data[i] > 0.0) {
-			dataout[i] = 1.0;
-		} else if (data[i] < 0.0) {
-			dataout[i] = -1.0;
-		} else {
-			dataout[i] = 0.0;
+	dataout.SetFillValue(DefaultFillValue);
+
+	if (data.HasFillValue()) {
+		for (int i = 0; i < dataout.GetRows(); i++) {
+			if ((std::isnan(data[i])) || (data[i] == data.GetFillValue())) {
+				dataout[i] = dataout.GetFillValue();
+			} else if (data[i] > 0.0) {
+				dataout[i] = 1.0;
+			} else if (data[i] < 0.0) {
+				dataout[i] = -1.0;
+			} else {
+				dataout[i] = 0.0;
+			}
+		}
+
+	} else {
+		for (int i = 0; i < dataout.GetRows(); i++) {
+			if (std::isnan(data[i])) {
+				dataout[i] = dataout.GetFillValue();
+			} else if (data[i] > 0.0) {
+				dataout[i] = 1.0;
+			} else if (data[i] < 0.0) {
+				dataout[i] = -1.0;
+			} else {
+				dataout[i] = 0.0;
+			}
 		}
 	}
-	
+
 	return true;
 }
 
@@ -530,6 +674,7 @@ bool DataOp_ALLPOS::Apply(
 		}
 	}
 
+	dataout.SetFillValue(DefaultFillValue);
 	for (int i = 0; i < dataout.GetRows(); i++) {
 		dataout[i] = 1.0;
 	}
@@ -537,9 +682,22 @@ bool DataOp_ALLPOS::Apply(
 	for (int v = 0; v < vecArgData.size(); v++) {
 		const DataArray1D<float> & data  = *(vecArgData[v]);
 
-		for (int i = 0; i < dataout.GetRows(); i++) {
-			if (data[i] <= 0.0) {
-				dataout[i] = 0.0;
+		if (data.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i]) || (data[i] == data.GetFillValue())) {
+					dataout[i] = dataout.GetFillValue();
+				} else if ((data[i] <= 0.0) && (dataout[i] != dataout.GetFillValue())) {
+					dataout[i] = 0.0;
+				}
+			}
+
+		} else {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i])) {
+					dataout[i] = dataout.GetFillValue();
+				} else if ((data[i] <= 0.0) && (dataout[i] != dataout.GetFillValue())) {
+					dataout[i] = 0.0;
+				}
 			}
 		}
 	}
@@ -575,18 +733,41 @@ bool DataOp_SUM::Apply(
 	}
 
 	dataout.Zero();
+	dataout.SetFillValue(DefaultFillValue);
+
 	for (int v = 0; v < vecArgData.size(); v++) {
 
 		if (vecArgData[v] == NULL) {
 			float dValue = atof(strArg[v].c_str());
 			for (int i = 0; i < dataout.GetRows(); i++) {
-				dataout[i] += dValue;
+				if (dataout[i] != dataout.GetFillValue()) {
+					dataout[i] += dValue;
+				}
 			}
 
 		} else {
 			const DataArray1D<float> & data  = *(vecArgData[v]);
-			for (int i = 0; i < dataout.GetRows(); i++) {
-				dataout[i] += data[i];
+
+			if (data.HasFillValue()) {
+				for (int i = 0; i < dataout.GetRows(); i++) {
+					if ((std::isnan(data[i])) ||
+					    (data[i] == data.GetFillValue()) ||
+					    (dataout[i] == dataout.GetFillValue())
+					) {
+						dataout[i] = dataout.GetFillValue();
+					} else {
+						dataout[i] += data[i];
+					}
+				}
+
+			} else {
+				for (int i = 0; i < dataout.GetRows(); i++) {
+					if ((std::isnan(data[i])) || (dataout[i] == dataout.GetFillValue())) {
+						dataout[i] = dataout.GetFillValue();
+					} else {
+						dataout[i] += data[i];
+					}
+				}
 			}
 		}
 	}
@@ -620,17 +801,50 @@ bool DataOp_AVG::Apply(
 	}
 
 	dataout.Zero();
-	for (int v = 0; v < vecArgData.size(); v++) {
-		const DataArray1D<float> & data  = *(vecArgData[v]);
+	dataout.SetFillValue(DefaultFillValue);
 
-		for (int i = 0; i < dataout.GetRows(); i++) {
-			dataout[i] += data[i];
+	for (int v = 0; v < vecArgData.size(); v++) {
+
+		if (vecArgData[v] == NULL) {
+			float dValue = atof(strArg[v].c_str());
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (dataout[i] != dataout.GetFillValue()) {
+					dataout[i] += dValue;
+				}
+			}
+
+		} else {
+			const DataArray1D<float> & data  = *(vecArgData[v]);
+
+			if (data.HasFillValue()) {
+				for (int i = 0; i < dataout.GetRows(); i++) {
+					if ((std::isnan(data[i])) ||
+					    (data[i] == data.GetFillValue()) ||
+					    (dataout[i] == dataout.GetFillValue())
+					) {
+						dataout[i] = dataout.GetFillValue();
+					} else {
+						dataout[i] += data[i];
+					}
+				}
+
+			} else {
+				for (int i = 0; i < dataout.GetRows(); i++) {
+					if ((std::isnan(data[i])) || (dataout[i] == dataout.GetFillValue())) {
+						dataout[i] = dataout.GetFillValue();
+					} else {
+						dataout[i] += data[i];
+					}
+				}
+			}
 		}
 	}
 
 	const double dScale = 1.0 / static_cast<double>(strArg.size());
 	for (int i = 0; i < dataout.GetRows(); i++) {
-		dataout[i] *= dScale;
+		if (dataout[i] != dataout.GetFillValue()) {
+			dataout[i] *= dScale;
+		}
 	}
 
 	return true;
@@ -671,26 +885,100 @@ bool DataOp_DIFF::Apply(
 		}
 	}
 
+	dataout.Zero();
+	dataout.SetFillValue(DefaultFillValue);
+
 	if (vecArgData[0] == NULL) {
 		float dValue = atof(strArg[0].c_str());
 		const DataArray1D<float> & data = *(vecArgData[1]);
-		for (int i = 0; i < dataout.GetRows(); i++) {
-			dataout[i] = dValue - data[i];
+		if (data.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i]) || (data[i] == data.GetFillValue())) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = dValue - data[i];
+				}
+			}
+		} else {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i])) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = dValue - data[i];
+				}
+			}
 		}
 
 	} else if (vecArgData[1] == NULL) {
 		const DataArray1D<float> & data = *(vecArgData[0]);
 		float dValue = atof(strArg[1].c_str());
-		for (int i = 0; i < dataout.GetRows(); i++) {
-			dataout[i] = data[i] - dValue;
+		if (data.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i]) || (data[i] == data.GetFillValue())) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = data[i] - dValue;
+				}
+			}
+		} else {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i])) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = data[i] - dValue;
+				}
+			}
 		}
 
 	} else {
 		const DataArray1D<float> & dataLeft  = *(vecArgData[0]);
 		const DataArray1D<float> & dataRight = *(vecArgData[1]);
 
-		for (int i = 0; i < dataout.GetRows(); i++) {
-			dataout[i] = dataLeft[i] - dataRight[i];
+		if (dataLeft.HasFillValue() && dataRight.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(dataLeft[i]) ||
+					(dataLeft[i] == dataLeft.GetFillValue()) ||
+				    std::isnan(dataRight[i]) ||
+					(dataRight[i] == dataRight.GetFillValue())
+				) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = dataLeft[i] - dataRight[i];
+				}
+			}
+
+		} else if (dataLeft.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(dataLeft[i]) ||
+					(dataLeft[i] == dataLeft.GetFillValue()) ||
+				    std::isnan(dataRight[i])
+				) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = dataLeft[i] - dataRight[i];
+				}
+			}
+
+		} else if (dataRight.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(dataLeft[i]) ||
+				    std::isnan(dataRight[i]) ||
+					(dataRight[i] == dataRight.GetFillValue())
+				) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = dataLeft[i] - dataRight[i];
+				}
+			}
+
+		} else {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(dataLeft[i]) || std::isnan(dataRight[i])) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = dataLeft[i] - dataRight[i];
+				}
+			}
 		}
 	}
 
@@ -724,21 +1012,32 @@ bool DataOp_PROD::Apply(
 		}
 	}
 
+	dataout.SetFillValue(DefaultFillValue);
 	for (int i = 0; i < dataout.GetRows(); i++) {
 		dataout[i] = 1.0;
 	}
+
 	for (int v = 0; v < vecArgData.size(); v++) {
 
 		if (vecArgData[v] == NULL) {
 			float dValue = atof(strArg[v].c_str());
 			for (int i = 0; i < dataout.GetRows(); i++) {
-				dataout[i] *= dValue;
+				if (dataout[i] != dataout.GetFillValue()) {
+					dataout[i] *= dValue;
+				}
 			}
 
 		} else {
 			const DataArray1D<float> & data  = *(vecArgData[v]);
 			for (int i = 0; i < dataout.GetRows(); i++) {
-				dataout[i] *= data[i];
+				if (std::isnan(data[i]) ||
+				    (data[i] == data.GetFillValue()) ||
+				    (dataout[i] == dataout.GetFillValue())
+				) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] *= data[i];
+				}
 			}
 		}
 	}
@@ -781,11 +1080,28 @@ bool DataOp_DIV::Apply(
 		}
 	}
 
+	dataout.Zero();
+	dataout.SetFillValue(DefaultFillValue);
+
 	if (vecArgData[0] == NULL) {
 		float dValue = atof(strArg[0].c_str());
 		const DataArray1D<float> & data = *(vecArgData[1]);
-		for (int i = 0; i < dataout.GetRows(); i++) {
-			dataout[i] = dValue / data[i];
+		if (data.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i]) || (data[i] == data.GetFillValue())) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = dValue / data[i];
+				}
+			}
+		} else {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i])) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = dValue / data[i];
+				}
+			}
 		}
 
 	} else if (vecArgData[1] == NULL) {
@@ -794,16 +1110,73 @@ bool DataOp_DIV::Apply(
 		if (dValue == 0.0) {
 			_EXCEPTION1("Division by zero in %s", m_strName.c_str());
 		}
-		for (int i = 0; i < dataout.GetRows(); i++) {
-			dataout[i] = data[i] / dValue;
+		if (data.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i]) || (data[i] == data.GetFillValue())) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = data[i] / dValue;
+				}
+			}
+		} else {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i])) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = data[i] / dValue;
+				}
+			}
 		}
 
 	} else {
 		const DataArray1D<float> & dataLeft  = *(vecArgData[0]);
 		const DataArray1D<float> & dataRight = *(vecArgData[1]);
 
-		for (int i = 0; i < dataout.GetRows(); i++) {
-			dataout[i] = dataLeft[i] / dataRight[i];
+		if (dataLeft.HasFillValue() && dataRight.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(dataLeft[i]) ||
+					(dataLeft[i] == dataLeft.GetFillValue()) ||
+				    std::isnan(dataRight[i]) ||
+					(dataRight[i] == dataRight.GetFillValue())
+				) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = dataLeft[i] / dataRight[i];
+				}
+			}
+
+		} else if (dataLeft.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(dataLeft[i]) ||
+					(dataLeft[i] == dataLeft.GetFillValue()) ||
+				    std::isnan(dataRight[i])
+				) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = dataLeft[i] / dataRight[i];
+				}
+			}
+
+		} else if (dataRight.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(dataLeft[i]) ||
+				    std::isnan(dataRight[i]) ||
+					(dataRight[i] == dataRight.GetFillValue())
+				) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = dataLeft[i] / dataRight[i];
+				}
+			}
+
+		} else {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(dataLeft[i]) || std::isnan(dataRight[i])) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = dataLeft[i] / dataRight[i];
+				}
+			}
 		}
 	}
 
@@ -837,6 +1210,8 @@ bool DataOp_MIN::Apply(
 		}
 	}
 
+	dataout.SetFillValue(DefaultFillValue);
+
 	if (vecArgData[0] == NULL) {
 		float dValue = atof(strArg[0].c_str());
 		for (int i = 0; i < dataout.GetRows(); i++) {
@@ -844,9 +1219,24 @@ bool DataOp_MIN::Apply(
 		}
 
 	} else {
-		const DataArray1D<float> & data  = *(vecArgData[0]);
-		for (int i = 0; i < dataout.GetRows(); i++) {
-			dataout[i] = data[i];
+		const DataArray1D<float> & data = *(vecArgData[0]);
+
+		if (data.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i]) || (data[i] == data.GetFillValue())) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = data[i];
+				}
+			}
+		} else {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i])) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = data[i];
+				}
+			}
 		}
 	}
 
@@ -855,16 +1245,34 @@ bool DataOp_MIN::Apply(
 		if (vecArgData[v] == NULL) {
 			float dValue = atof(strArg[v].c_str());
 			for (int i = 0; i < dataout.GetRows(); i++) {
-				if (dValue < dataout[i]) {
+				if ((dValue < dataout[i]) && (dataout[i] != dataout.GetFillValue())) {
 					dataout[i] = dValue;
 				}
 			}
 
 		} else {
-			const DataArray1D<float> & data  = *(vecArgData[v]);
-			for (int i = 0; i < dataout.GetRows(); i++) {
-				if (data[i] < dataout[i]) {
-					dataout[i] = data[i];
+			const DataArray1D<float> & data = *(vecArgData[v]);
+			if (data.HasFillValue()) {
+				for (int i = 0; i < dataout.GetRows(); i++) {
+					if (std::isnan(data[i]) ||
+					    (data[i] == data.GetFillValue()) ||
+					    (dataout[i] == dataout.GetFillValue())
+					) {
+						dataout[i] = dataout.GetFillValue();
+					} else if (data[i] < dataout[i]) {
+						dataout[i] = data[i];
+					}
+				}
+
+			} else {
+				for (int i = 0; i < dataout.GetRows(); i++) {
+					if (std::isnan(data[i]) ||
+					    (dataout[i] == dataout.GetFillValue())
+					) {
+						dataout[i] = dataout.GetFillValue();
+					} else if (data[i] < dataout[i]) {
+						dataout[i] = data[i];
+					}
 				}
 			}
 		}
@@ -900,6 +1308,8 @@ bool DataOp_MAX::Apply(
 		}
 	}
 
+	dataout.SetFillValue(DefaultFillValue);
+
 	if (vecArgData[0] == NULL) {
 		float dValue = atof(strArg[0].c_str());
 		for (int i = 0; i < dataout.GetRows(); i++) {
@@ -907,9 +1317,24 @@ bool DataOp_MAX::Apply(
 		}
 
 	} else {
-		const DataArray1D<float> & data  = *(vecArgData[0]);
-		for (int i = 0; i < dataout.GetRows(); i++) {
-			dataout[i] = data[i];
+		const DataArray1D<float> & data = *(vecArgData[0]);
+
+		if (data.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i]) || (data[i] == data.GetFillValue())) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = data[i];
+				}
+			}
+		} else {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data[i])) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = data[i];
+				}
+			}
 		}
 	}
 
@@ -918,16 +1343,34 @@ bool DataOp_MAX::Apply(
 		if (vecArgData[v] == NULL) {
 			float dValue = atof(strArg[v].c_str());
 			for (int i = 0; i < dataout.GetRows(); i++) {
-				if (dValue > dataout[i]) {
+				if ((dValue > dataout[i]) && (dataout[i] != dataout.GetFillValue())) {
 					dataout[i] = dValue;
 				}
 			}
 
 		} else {
-			const DataArray1D<float> & data  = *(vecArgData[v]);
-			for (int i = 0; i < dataout.GetRows(); i++) {
-				if (data[i] > dataout[i]) {
-					dataout[i] = data[i];
+			const DataArray1D<float> & data = *(vecArgData[v]);
+			if (data.HasFillValue()) {
+				for (int i = 0; i < dataout.GetRows(); i++) {
+					if (std::isnan(data[i]) ||
+					    (data[i] == data.GetFillValue()) ||
+					    (dataout[i] == dataout.GetFillValue())
+					) {
+						dataout[i] = dataout.GetFillValue();
+					} else if (data[i] > dataout[i]) {
+						dataout[i] = data[i];
+					}
+				}
+
+			} else {
+				for (int i = 0; i < dataout.GetRows(); i++) {
+					if (std::isnan(data[i]) ||
+					    (dataout[i] == dataout.GetFillValue())
+					) {
+						dataout[i] = dataout.GetFillValue();
+					} else if (data[i] > dataout[i]) {
+						dataout[i] = data[i];
+					}
 				}
 			}
 		}
@@ -963,6 +1406,8 @@ bool DataOp_COND::Apply(
 		}
 	}
 
+	dataout.SetFillValue(DefaultFillValue);
+
 	// First conditional is a float
 	if (vecArgData[0] == NULL) {
 		float dValue0 = atof(strArg[0].c_str());
@@ -978,8 +1423,18 @@ bool DataOp_COND::Apply(
 			}
 		} else {
 			const DataArray1D<float> & data = *(vecArgData[ix]);
-			for (int i = 0; i < dataout.GetRows(); i++) {
-				dataout[i] = data[i];
+			if (data.HasFillValue()) {
+				for (int i = 0; i < dataout.GetRows(); i++) {
+					if (data[i] == data.GetFillValue()) {
+						dataout[i] = dataout.GetFillValue();
+					} else {
+						dataout[i] = data[i];
+					}
+				}
+			} else {
+				for (int i = 0; i < dataout.GetRows(); i++) {
+					dataout[i] = data[i];
+				}
 			}
 		}
 
@@ -992,7 +1447,9 @@ bool DataOp_COND::Apply(
 			float dValue1 = atof(strArg[1].c_str());
 			float dValue2 = atof(strArg[2].c_str());
 			for (int i = 0; i < datacond.GetRows(); i++) {
-				if (datacond[i] > 0.0) {
+				if (std::isnan(datacond[i]) || (datacond.HasFillValue() && (datacond[i] == datacond.GetFillValue()))) {
+					dataout[i] = dataout.GetFillValue();
+				} else if (datacond[i] > 0.0) {
 					dataout[i] = dValue1;
 				} else {
 					dataout[i] = dValue2;
@@ -1004,10 +1461,16 @@ bool DataOp_COND::Apply(
 			float dValue1 = atof(strArg[1].c_str());
 			const DataArray1D<float> & data2 = *(vecArgData[2]);
 			for (int i = 0; i < datacond.GetRows(); i++) {
-				if (datacond[i] > 0.0) {
+				if (std::isnan(datacond[i]) || (datacond.HasFillValue() && (datacond[i] == datacond.GetFillValue()))) {
+					dataout[i] = dataout.GetFillValue();
+				} else if (datacond[i] > 0.0) {
 					dataout[i] = dValue1;
 				} else {
-					dataout[i] = data2[i];
+					if (std::isnan(data2[i]) || (data2.HasFillValue() && (data2[i] == data2.GetFillValue()))) {
+						dataout[i] = dataout.GetFillValue();
+					} else {
+						dataout[i] = data2[i];
+					}
 				}
 			}
 
@@ -1016,8 +1479,14 @@ bool DataOp_COND::Apply(
 			const DataArray1D<float> & data1 = *(vecArgData[1]);
 			float dValue2 = atof(strArg[2].c_str());
 			for (int i = 0; i < datacond.GetRows(); i++) {
-				if (datacond[i] > 0.0) {
-					dataout[i] = data1[i];
+				if (std::isnan(datacond[i]) || (datacond.HasFillValue() && (datacond[i] == datacond.GetFillValue()))) {
+					dataout[i] = dataout.GetFillValue();
+				} else if (datacond[i] > 0.0) {
+					if (std::isnan(data1[i]) || (data1.HasFillValue() && (data1[i] == data1.GetFillValue()))) {
+						dataout[i] = dataout.GetFillValue();
+					} else {
+						dataout[i] = data1[i];
+					}
 				} else {
 					dataout[i] = dValue2;
 				}
@@ -1028,13 +1497,22 @@ bool DataOp_COND::Apply(
 			const DataArray1D<float> & data1 = *(vecArgData[1]);
 			const DataArray1D<float> & data2 = *(vecArgData[2]);
 			for (int i = 0; i < datacond.GetRows(); i++) {
-				if (datacond[i] > 0.0) {
-					dataout[i] = data1[i];
+				if (std::isnan(datacond[i]) || (datacond.HasFillValue() && (datacond[i] == datacond.GetFillValue()))) {
+					dataout[i] = dataout.GetFillValue();
+				} else if (datacond[i] > 0.0) {
+					if (std::isnan(data1[i]) || (data1.HasFillValue() && (data1[i] == data1.GetFillValue()))) {
+						dataout[i] = dataout.GetFillValue();
+					} else {
+						dataout[i] = data1[i];
+					}
 				} else {
-					dataout[i] = data2[i];
+					if (std::isnan(data2[i]) || (data2.HasFillValue() && (data2[i] == data2.GetFillValue()))) {
+						dataout[i] = dataout.GetFillValue();
+					} else {
+						dataout[i] = data2[i];
+					}
 				}
 			}
-
 		}
 	}
 
@@ -1042,7 +1520,106 @@ bool DataOp_COND::Apply(
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// DataOp_SQRT
+// DataOp_EQUALS
+///////////////////////////////////////////////////////////////////////////////
+
+const char * DataOp_EQUALS::name = "_EQUALS";
+
+///////////////////////////////////////////////////////////////////////////////
+
+bool DataOp_EQUALS::Apply(
+	const SimpleGrid & grid,
+	const std::vector<std::string> & strArg,
+	const std::vector<DataArray1D<float> const *> & vecArgData,
+	DataArray1D<float> & dataout
+) {
+	if (strArg.size() != 2) {
+		_EXCEPTION2("%s expects two arguments: %i given",
+			m_strName.c_str(), strArg.size());
+	}
+	for (int v = 0; v < vecArgData.size(); v++) {
+		if (vecArgData[v] == NULL) {
+			if (!STLStringHelper::IsFloat(strArg[v])) {
+				_EXCEPTION1("Arguments to %s must be data variables or floats",
+					m_strName.c_str());
+			}
+		}
+	}
+
+	dataout.SetFillValue(DefaultFillValue);
+
+	// First argument is a float
+	if (vecArgData[0] == NULL) {
+		float dValue0 = atof(strArg[0].c_str());
+
+		// Second argument is a float
+		if (vecArgData[1] == NULL) {
+			float dValue1 = atof(strArg[1].c_str());
+
+			if (dValue0 == dValue1) {
+				for (int i = 0; i < dataout.GetRows(); i++) {
+					dataout[i] = 1.0;
+				}
+			} else {
+				for (int i = 0; i < dataout.GetRows(); i++) {
+					dataout[i] = 0.0;
+				}
+			}
+
+		// Second argument is a field
+		} else {
+			const DataArray1D<float> & data1 = *(vecArgData[1]);
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data1[i]) || (data1.HasFillValue() && (data1[i] == data1.GetFillValue()))) {
+					dataout[i] = dataout.GetFillValue();
+				} else if (dValue0 == data1[i]) {
+					dataout[i] = 1.0;
+				} else {
+					dataout[i] = 0.0;
+				}
+			}
+		}
+
+	// First argument is a field
+	} else {
+		const DataArray1D<float> & data0 = *(vecArgData[0]);
+
+		// Second argument is a float
+		if (vecArgData[1] == NULL) {
+			float dValue1 = atof(strArg[1].c_str());
+
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data0[i]) || (data0.HasFillValue() && (data0[i] == data0.GetFillValue()))) {
+					dataout[i] = dataout.GetFillValue();
+				} else if (data0[i] == dValue1) {
+					dataout[i] = 1.0;
+				} else {
+					dataout[i] = 0.0;
+				}
+			}
+
+		// Second argument is a field
+		} else {
+			const DataArray1D<float> & data1 = *(vecArgData[1]);
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (std::isnan(data0[i]) || (data0.HasFillValue() && (data0[i] == data0.GetFillValue()))) {
+					dataout[i] = dataout.GetFillValue();
+				} else if (std::isnan(data1[i]) || (data1.HasFillValue() && (data1[i] == data1.GetFillValue()))) {
+					dataout[i] = dataout.GetFillValue();
+				} else if (data0[i] == data1[i]) {
+					dataout[i] = 1.0;
+				} else {
+					dataout[i] = 0.0;
+				}
+			}
+		}
+	}
+
+	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// DataOp_EQUALS
 ///////////////////////////////////////////////////////////////////////////////
 
 const char * DataOp_SQRT::name = "_SQRT";
@@ -1060,6 +1637,8 @@ bool DataOp_SQRT::Apply(
 			m_strName.c_str(), strArg.size());
 	}
 
+	dataout.SetFillValue(DefaultFillValue);
+
 	if (vecArgData[0] == NULL) {
 		float dValue = atof(strArg[0].c_str());
 		for (int i = 0; i < dataout.GetRows(); i++) {
@@ -1069,8 +1648,18 @@ bool DataOp_SQRT::Apply(
 	} else {
 		const DataArray1D<float> & data = *(vecArgData[0]);
 
-		for (int i = 0; i < dataout.GetRows(); i++) {
-			dataout[i] = sqrt(data[i]);
+		if (data.HasFillValue()) {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				if (data[i] == data.GetFillValue()) {
+					dataout[i] = dataout.GetFillValue();
+				} else {
+					dataout[i] = sqrt(data[i]);
+				}
+			}
+		} else {
+			for (int i = 0; i < dataout.GetRows(); i++) {
+				dataout[i] = sqrt(data[i]);
+			}
 		}
 	}
 
@@ -1153,8 +1742,70 @@ bool DataOp_LAT::Apply(
 			m_strName.c_str(), strArg.size());
 	}
 
+	dataout.SetFillValue(DefaultFillValue);
+
 	for (int i = 0; i < dataout.GetRows(); i++) {
 		dataout[i] = grid.m_dLat[i] * 180.0 / M_PI;
+	}
+
+	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// DataOp_LAT
+///////////////////////////////////////////////////////////////////////////////
+
+const char * DataOp_LON::name = "_LON";
+
+///////////////////////////////////////////////////////////////////////////////
+
+bool DataOp_LON::Apply(
+	const SimpleGrid & grid,
+	const std::vector<std::string> & strArg,
+	const std::vector<DataArray1D<float> const *> & vecArgData,
+	DataArray1D<float> & dataout
+) {
+	if (strArg.size() != 0) {
+		_EXCEPTION2("%s expects zero arguments: %i given",
+			m_strName.c_str(), strArg.size());
+	}
+
+	dataout.SetFillValue(DefaultFillValue);
+
+	for (int i = 0; i < dataout.GetRows(); i++) {
+		dataout[i] = grid.m_dLon[i] * 180.0 / M_PI;
+	}
+
+	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// DataOp_AREA
+///////////////////////////////////////////////////////////////////////////////
+
+const char * DataOp_AREA::name = "_AREA";
+
+///////////////////////////////////////////////////////////////////////////////
+
+bool DataOp_AREA::Apply(
+	const SimpleGrid & grid,
+	const std::vector<std::string> & strArg,
+	const std::vector<DataArray1D<float> const *> & vecArgData,
+	DataArray1D<float> & dataout
+) {
+	if (strArg.size() > 1) {
+		_EXCEPTION2("%s expects at most one argument: %i given",
+			m_strName.c_str(), strArg.size());
+	}
+	if (!grid.HasAreas()) {
+		_EXCEPTION1("Grid area not available in %s operator",
+			m_strName.c_str());
+	}
+
+	dataout.SetFillValue(DefaultFillValue);
+
+	for (int i = 0; i < dataout.GetRows(); i++) {
+		dataout[i] = grid.m_dArea[i] * EarthRadius * EarthRadius;
 	}
 
 	return true;
@@ -1180,6 +1831,8 @@ bool DataOp_F::Apply(
 		_EXCEPTION2("%s expects zero arguments: %i given",
 			m_strName.c_str(), strArg.size());
 	}
+
+	dataout.SetFillValue(DefaultFillValue);
 
 	for (int i = 0; i < dataout.GetRows(); i++) {
 		dataout[i] = 2.0 * Omega * sin(grid.m_dLat[i]);
@@ -2563,6 +3216,239 @@ bool DataOp_MEAN::Apply(
 	}
 
 	m_opMean.Apply(*(vecArgData[0]), dataout, true);
+
+	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// DataOp_DAILYCHILLHOURS
+///////////////////////////////////////////////////////////////////////////////
+
+const char * DataOp_DAILYCHILLHOURS::name = "_DAILYCHILLHOURS";
+
+///////////////////////////////////////////////////////////////////////////////
+
+bool DataOp_DAILYCHILLHOURS::Apply(
+	const SimpleGrid & grid,
+	const std::vector<std::string> & strArg,
+	const std::vector<DataArray1D<float> const *> & vecArgData,
+	DataArray1D<float> & dataout
+) {
+	if (strArg.size() != 3) {
+		_EXCEPTION2("%s expects three arguments: %i given",
+			m_strName.c_str(), strArg.size());
+	}
+
+	if ((vecArgData[0] == NULL) || (vecArgData[1] == NULL)) {
+		_EXCEPTION1("%s expects first argument (tasmin) and second argument (tasmax) to be data variables",
+			m_strName.c_str());
+	}
+	const DataArray1D<float> & dataTasmin = *(vecArgData[0]);
+	const DataArray1D<float> & dataTasmax = *(vecArgData[1]);
+
+	// Freezing and chilling temperature are defined in degrees F
+	float dFreezingTemp = 32.0;
+	float dChillingTemp = 45.0;
+
+	// Convert to local unit
+	bool fSuccess;
+	fSuccess = ConvertUnits<float>(dFreezingTemp, "degF", strArg[2], false);
+	if (!fSuccess) {
+		_EXCEPTION2("%s cannot convert freezing temperature to provided units \"%s\"",
+			m_strName.c_str(), strArg[2].c_str());
+	}
+
+	fSuccess = ConvertUnits<float>(dChillingTemp, "degF", strArg[2], false);
+	if (!fSuccess) {
+		_EXCEPTION2("%s cannot convert chilling temperature to provided units \"%s\"",
+			m_strName.c_str(), strArg[2].c_str());
+	}
+
+	// Calculate daily chill hours using similar triangles
+	bool fWarning = false;
+	for (int i = 0; i < dataout.GetRows(); i++) {
+		if (dataTasmin[i] > dataTasmax[i]) {
+			dataout[i] = 0.0;
+			fWarning = true;
+		} else if (dataTasmax[i] < dFreezingTemp) {
+			dataout[i] = 0.0;
+		} else if (dataTasmax[i] < dChillingTemp) {
+			if (dataTasmin[i] < dFreezingTemp) {
+				dataout[i] = 24.0 * (dataTasmax[i] - dFreezingTemp) / (dataTasmax[i] - dataTasmin[i]);
+			} else {
+				dataout[i] = 24.0;
+			}
+		} else {
+			if (dataTasmin[i] < dFreezingTemp) {
+				dataout[i] = 24.0 * (dChillingTemp - dFreezingTemp) / (dataTasmax[i] - dataTasmin[i]);
+			} else if (dataTasmin[i] < dChillingTemp) {
+				dataout[i] = 24.0 * (dChillingTemp - dataTasmin[i]) / (dataTasmax[i] - dataTasmin[i]);
+			} else {
+				dataout[i] = 0.0;
+			}
+		}
+	}
+
+	if (fWarning) {
+		Announce("WARNING: Some grid points have tasmax < tasmin");
+	}
+
+	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// DataOp_RELHUMFROMTDTA
+///////////////////////////////////////////////////////////////////////////////
+
+const char * DataOp_RELHUMFROMTDTA::name = "_RELHUMFROMTDTA";
+
+///////////////////////////////////////////////////////////////////////////////
+
+bool DataOp_RELHUMFROMTDTA::Apply(
+	const SimpleGrid & grid,
+	const std::vector<std::string> & strArg,
+	const std::vector<DataArray1D<float> const *> & vecArgData,
+	DataArray1D<float> & dataout
+) {
+	if (strArg.size() != 3) {
+		_EXCEPTION2("%s expects three arguments: %i given",
+			m_strName.c_str(), strArg.size());
+	}
+
+	if ((vecArgData[0] == NULL) || (vecArgData[1] == NULL)) {
+		_EXCEPTION1("%s expects first argument (td) and second argument (ta) to be data variables",
+			m_strName.c_str());
+	}
+	const DataArray1D<float> & dataTd = *(vecArgData[0]);
+	const DataArray1D<float> & dataTa = *(vecArgData[1]);
+
+	dataout.SetFillValue(DefaultFillValue);
+	dataout.SetUnits("percent");
+
+	// Calculate relative humidity from Td and Ta
+
+	// Calculation with variables provided in degrees Celsius
+	if ((strArg[2] == "degC") || (strArg[2] == "C")) {
+		for (int i = 0; i < dataout.GetRows(); i++) {
+			if ((dataTd.HasFillValue() && (dataTd[i] == dataTd.GetFillValue())) ||
+			    (dataTa.HasFillValue() && (dataTa[i] == dataTa.GetFillValue()))
+			) {
+				dataout[i] = dataout.GetFillValue();
+			} else {
+				dataout[i] = 100.0 * exp((17.1 * dataTd[i]) / (235.0 + dataTd[i]) - (17.1 * dataTa[i]) / (235.0 + dataTa[i]));
+			}
+		}
+
+	// Calculation with variables provided in Kelvin
+	} else if (strArg[2] == "K") {
+		for (int i = 0; i < dataout.GetRows(); i++) {
+			if ((dataTd.HasFillValue() && (dataTd[i] == dataTd.GetFillValue())) ||
+			    (dataTa.HasFillValue() && (dataTa[i] == dataTa.GetFillValue()))
+			) {
+				dataout[i] = dataout.GetFillValue();
+			} else {
+				dataout[i] = 100.0 * exp((17.1 * (dataTd[i] - 273.15)) / (dataTd[i] - 38.15) - (17.1 * (dataTa[i] - 273.15)) / (dataTa[i] - 38.15));
+			}
+		}
+
+	// Calculation with variables provided in degrees Fahrenheit
+	} else if ((strArg[2] == "degF") || (strArg[2] == "F")) {
+		for (int i = 0; i < dataout.GetRows(); i++) {
+			if ((dataTd.HasFillValue() && (dataTd[i] == dataTd.GetFillValue())) ||
+			    (dataTa.HasFillValue() && (dataTa[i] == dataTa.GetFillValue()))
+			) {
+				dataout[i] = dataout.GetFillValue();
+			} else {
+				double dTdDegC = (5.0/9.0) * (dataTd[i] - 32.0);
+				double dTaDegC = (5.0/9.0) * (dataTa[i] - 32.0);
+
+				dataout[i] = 100.0 * exp((17.1 * dTdDegC) / (235.0 + dTdDegC) - (17.1 * dTaDegC) / (235.0 + dTaDegC));
+			}
+		}
+	
+	// Invalid unit
+	} else {
+		_EXCEPTION1("Invalid third argument units in _RELHUMFROMTDT2M (%s): Expected \"degC\", \"degF\", \"K\"",
+			strArg[2].c_str());
+	}
+
+	return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// DataOp_VPDFROMTAHUR
+///////////////////////////////////////////////////////////////////////////////
+
+const char * DataOp_VPDFROMTAHUR::name = "_VPDFROMTAHUR";
+
+///////////////////////////////////////////////////////////////////////////////
+
+bool DataOp_VPDFROMTAHUR::Apply(
+	const SimpleGrid & grid,
+	const std::vector<std::string> & strArg,
+	const std::vector<DataArray1D<float> const *> & vecArgData,
+	DataArray1D<float> & dataout
+) {
+	if (strArg.size() != 3) {
+		_EXCEPTION2("%s expects three arguments: %i given",
+			m_strName.c_str(), strArg.size());
+	}
+
+	if ((vecArgData[0] == NULL) || (vecArgData[1] == NULL)) {
+		_EXCEPTION1("%s expects first argument (ta) and second argument (hur) to be data variables",
+			m_strName.c_str());
+	}
+	const DataArray1D<float> & dataTa = *(vecArgData[0]);
+	const DataArray1D<float> & dataHur = *(vecArgData[1]);
+
+	dataout.SetFillValue(DefaultFillValue);
+	dataout.SetUnits("hPa");
+
+	// Calculate relative humidity from Td and Ta
+
+	// Calculation with variables provided in degrees Celsius
+	if ((strArg[2] == "degC") || (strArg[2] == "C")) {
+		for (int i = 0; i < dataout.GetRows(); i++) {
+			if ((dataHur.HasFillValue() && (dataHur[i] == dataHur.GetFillValue())) ||
+			    (dataTa.HasFillValue() && (dataTa[i] == dataTa.GetFillValue()))
+			) {
+				dataout[i] = dataout.GetFillValue();
+			} else {
+				dataout[i] = 6.1094 * exp(17.625 * dataTa[i] / (dataTa[i] + 243.04)) * (1.0 - dataHur[i] / 100.0);
+			}
+		}
+
+	// Calculation with variables provided in Kelvin
+	} else if (strArg[2] == "K") {
+		for (int i = 0; i < dataout.GetRows(); i++) {
+			if ((dataHur.HasFillValue() && (dataHur[i] == dataHur.GetFillValue())) ||
+			    (dataTa.HasFillValue() && (dataTa[i] == dataTa.GetFillValue()))
+			) {
+				dataout[i] = dataout.GetFillValue();
+			} else {
+				dataout[i] = 6.1094 * exp(17.625 * (dataTa[i] - 273.15) / (dataTa[i] - 30.11)) * (1.0 - dataHur[i] / 100.0);
+			}
+		}
+
+	// Calculation with variables provided in degrees Fahrenheit
+	} else if ((strArg[2] == "degF") || (strArg[2] == "F")) {
+		for (int i = 0; i < dataout.GetRows(); i++) {
+			if ((dataHur.HasFillValue() && (dataHur[i] == dataHur.GetFillValue())) ||
+			    (dataTa.HasFillValue() && (dataTa[i] == dataTa.GetFillValue()))
+			) {
+				dataout[i] = dataout.GetFillValue();
+			} else {
+				double dTaDegC = (5.0/9.0) * (dataTa[i] - 32.0);
+
+				dataout[i] = 6.1094 * exp(17.625 * dTaDegC / (dTaDegC + 243.04)) * (1.0 - dataHur[i] / 100.0);
+			}
+		}
+
+	// Invalid unit
+	} else {
+		_EXCEPTION1("Invalid third argument units in _VPDFROMTARH (%s): Expected \"degC\", \"degF\", \"K\"",
+			strArg[2].c_str());
+	}
 
 	return true;
 }

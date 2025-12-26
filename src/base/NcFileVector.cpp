@@ -96,10 +96,14 @@ void NcFileVector::InsertFile(
 					m_vecFileType.push_back(FileType_Standard);
 				} else {
 					std::string strType = attType->as_string(0);
-					if (strType == "daily mean climatology") {
-						m_vecFileType.push_back(FileType_DailyMeanClimo);
-					} else if (strType == "annual mean climatology") {
-						m_vecFileType.push_back(FileType_AnnualMeanClimo);
+					if (strType.find("climatology") != std::string::npos) {
+						if (strType.find("daily") != std::string::npos) {
+							m_vecFileType.push_back(FileType_DailyMeanClimo);
+						} else if (strType.find("annual") != std::string::npos) {
+							m_vecFileType.push_back(FileType_AnnualMeanClimo);
+						} else {
+							m_vecFileType.push_back(FileType_Standard);
+						}
 					} else {
 						m_vecFileType.push_back(FileType_Standard);
 						//_EXCEPTION2("Unrecognized time::type (%s) in file \"%s\"",
@@ -163,6 +167,19 @@ size_t NcFileVector::FindContainingVariable(
 		*pvar = NULL;
 	}
 	return InvalidIndex;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+
+std::string NcFileVector::GetConcatenatedFilenames() const {
+	std::string strConcatFilenames;
+	for (size_t s = 0; s < m_vecFilenames.size(); s++) {
+		strConcatFilenames += m_vecFilenames[s];
+		if (s != m_vecFilenames.size()-1) {
+			strConcatFilenames += ";";
+		}
+	}
+	return strConcatFilenames;
 }
 
 ///////////////////////////////////////////////////////////////////////////////

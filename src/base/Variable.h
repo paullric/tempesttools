@@ -23,110 +23,11 @@
 #include "SimpleGrid.h"
 #include "DataOp.h"
 #include "NcFileVector.h"
+#include "NetCDFUtilities.h"
 
 #include <vector>
 #include <string>
 #include <limits>
-
-///////////////////////////////////////////////////////////////////////////////
-
-///	<summary>
-///		An object holding dimension indices for a given Variable.
-///	</summary>
-typedef std::vector<long> VariableDimIndex;
-
-///	<summary>
-///		An object holding auxiliary indices for a given Variable.
-///	</summary>
-typedef VariableDimIndex VariableAuxIndex;
-
-///	<summary>
-///		A structure containing both a dimension name and size.
-///	</summary>
-class DimInfo {
-public:
-	///	<summary>
-	///		Default constructor.
-	///	</summary>
-	DimInfo() : name(), size(0) { }
-
-	///	<summary>
-	///		Constructor.
-	///	</summary>
-	DimInfo(
-		const std::string & _name,
-		long _size
-	) :
-		name(_name),
-		size(_size)
-	{ }
-
-	///	<summary>
-	///		Comparator (needed to have sets of DimInfo).
-	///	</summary>
-	bool operator< (const DimInfo & di) const {
-		if (name < di.name) {
-			return true;
-		}
-		if (size < di.size) {
-			return true;
-		}
-		return false;
-	}
-
-	///	<summary>
-	///		Equality comparator.
-	///	</summary>
-	bool operator== (const DimInfo & di) const {
-		if ((name == di.name) && (size == di.size)) {
-			return true;
-		}
-		return false;
-	}
-
-public:
-	///	<summary>
-	///		Dimension name.
-	///	</summary>
-	std::string name;
-
-	///	<summary>
-	///		Dimension size.
-	///	</summary>
-	long size;
-};
-
-///	<summary>
-///		A vector of DimInfo.
-///	</summary>
-class DimInfoVector : public std::vector<DimInfo> {
-
-public:
-	///	<summary>
-	///		Get the total size of this DimInfoVector.
-	///	</summary>
-	size_t GetTotalSize() const {
-		size_t sTotalSize = 1;
-		for (size_t i = 0; i < size(); i++) {
-			sTotalSize *= static_cast<size_t>((*this)[i].size);
-		}
-		return sTotalSize;
-	}
-
-	///	<summary>
-	///		Convert this to a string.
-	///	</summary>
-	std::string ToString() const {
-		std::string str;
-		for (size_t d = 0; d < size(); d++) {
-			str += "[" + (*this)[d].name + "," + std::to_string((*this)[d].size) + "]";
-		}
-		if (str.length() == 0) {
-			str = "[]";
-		}
-		return str;
-	}
-};
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -492,6 +393,13 @@ public:
 		DimInfoVector & vecAuxDimInfo
 	) const;
 
+	///	<summary>
+	///		Get _FillValue information for all variables.
+	///	</summary>
+	void PopulateFillValues(
+		const NcFileVector & vecncDataFiles
+	);
+
 private:
 	///	<summary>
 	///		Recursively assign auxiliary indices to Variables.
@@ -608,16 +516,19 @@ public:
 	Variable() :
 		m_strName(),
 		m_fOp(false),
-		m_dFillValueFloat(-std::numeric_limits<float>::max()),
 		m_fNoTimeInNcFile(false),
-		m_timeStored(Time::CalendarUnknown)
+		m_strSourceFilenames(),
+		m_timeStored(Time::CalendarUnknown),
+		m_fHasScaleFactorOrAddOffset(false),
+		m_dScaleFactor(1.0f),
+		m_dAddOffset(0.0f)
 	{ }
 
 public:
 	///	<summary>
 	///		Equality operator.
 	///	</summary>
-	bool operator==(const Variable & var);
+	bool operator==(const Variable & var) const;
 
 	///	<summary>
 	///		Get the name of this Variable.
@@ -656,10 +567,27 @@ public:
 	}
 
 	///	<summary>
+	///		Returns true if this Variable has an explicit _FillValue.
+	///		Note that the FillValue is only set when data is loaded.
+	///	</summary>
+	bool HasExplicitFillValue() const {
+		return m_data.HasFillValue();
+	}
+
+	///	<summary>
 	///		Get the _FillValue for this variable.
+	///		Note that the FillValue is only set when data is loaded.
 	///	</summary>
 	float GetFillValueFloat() const {
-		return m_dFillValueFloat;
+		return m_data.GetFillValue();
+	}
+
+	///	<summary>
+	///		Get the units of this variable.
+	///		Note that the units are only set when data is loaded.
+	///	</summary>
+	const std::string & GetUnits() const {
+		return m_data.GetUnits();
 	}
 
 public:
@@ -734,11 +662,6 @@ protected:
 	///	</summary>
 	VariableIndexVector m_varArg;
 
-	///	<summary>
-	///		_FillValue for this Variable.
-	///	</summary>
-	float m_dFillValueFloat;
-
 protected:
 /*
 	///	<summary>
@@ -774,9 +697,29 @@ public:
 	bool m_fNoTimeInNcFile;
 
 	///	<summary>
+	///		Filenames currently used for this Variable.
+	///	</summary>
+	std::string m_strSourceFilenames;
+
+	///	<summary>
 	///		Time currently stored in this Variable.
 	///	</summary>
 	Time m_timeStored;
+
+	///	<summary>
+	///		Variable has scale factor and/or offset that needs to be applied when data is loaded.
+	///	</summary>
+	bool m_fHasScaleFactorOrAddOffset;
+
+	///	<summary>
+	///		Scale factor to apply whenever variable is loaded.
+	///	</summary>
+	float m_dScaleFactor;
+
+	///	<summary>
+	///		Offset to add whenever variable is loaded.
+	///	</summary>
+	float m_dAddOffset;
 
 	///	<summary>
 	///		Data associated with this Variable.

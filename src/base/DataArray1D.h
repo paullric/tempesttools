@@ -23,6 +23,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <cmath>
 
 template <typename T>
 class DataArray1D {
@@ -36,6 +37,8 @@ public:
 	DataArray1D() :
 		m_fOwnsData(true),
 		m_sSize(0),
+		m_fHasFillValue(false),
+		m_dFillValue(T()),
 		m_data(NULL)
 	{ }
 
@@ -48,6 +51,8 @@ public:
 	) :
 		m_fOwnsData(true),
 		m_sSize(sSize),
+		m_fHasFillValue(false),
+		m_dFillValue(T()),
 		m_data(NULL)
 	{
 		if (fAllocate) {
@@ -248,6 +253,21 @@ public:
 	}
 
 	///	<summary>
+	///		Set the content of this DataArray1D to the specified value.
+	///	</summary>
+	void Set(const T & x) {
+
+		// Check that this DataArray1D is attached to a data object
+		if (!IsAttached()) {
+			_EXCEPTIONT("Attempted operation on uninitialized DataArray1D");
+		}
+
+		for (size_t i = 0; i < m_sSize; i++) {
+			m_data[i] = x;
+		}
+	}
+
+	///	<summary>
 	///		Scale data by a given constant.
 	///	</summary>
 	void Scale(const T & x) {
@@ -285,6 +305,77 @@ public:
 		for (size_t i = 0; i < m_sSize; i++) {
 			m_data[i] += x * da.m_data[i];
 		}
+	}
+
+public:
+	///	<summary>
+	///		Check if this data has a FillValue.
+	///	</summary>
+	bool HasFillValue() const {
+		return m_fHasFillValue;
+	}
+
+	///	<summary>
+	///		Get the FillValue.
+	///	</summary>
+	const T & GetFillValue() const {
+		return m_dFillValue;
+	}
+
+	///	<summary>
+	///		Set the FillValue.
+	///	</summary>
+	void SetFillValue(const T & dFillValue) {
+		m_fHasFillValue = true;
+		m_dFillValue = dFillValue;
+	}
+
+	///	<summary>
+	///		Remove the FillValue.
+	///	</summary>
+	void RemoveFillValue() {
+		m_fHasFillValue = false;
+	}
+
+	///	<summary>
+	///		Check if data is missing.
+	///	</summary>
+	bool IsFillValue(const T & dValue) const {
+		if (std::isnan(dValue)) {
+			return true;
+		}
+		if (m_fHasFillValue && (dValue == m_dFillValue)) {
+			return true;
+		}
+		return false;
+	}
+
+	///	<summary>
+	///		Check if data is missing.
+	///	</summary>
+	bool IsFillValueAtIx(size_t i) const {
+		if (std::isnan(m_data[i])) {
+			return true;
+		}
+		if (m_fHasFillValue && (m_data[i] == m_dFillValue)) {
+			return true;
+		}
+		return false;
+	}
+
+public:
+	///	<summary>
+	///		Get the units.
+	///	</summary>
+	const std::string & GetUnits() const {
+		return m_strUnits;
+	}
+
+	///	<summary>
+	///		Set the units.
+	///	</summary>
+	void SetUnits(const std::string & strUnits) {
+		m_strUnits = strUnits;
 	}
 
 public:
@@ -335,6 +426,21 @@ private:
 	///		The number of rows in this DataArray1D.
 	///	</summary>
 	size_t m_sSize;
+
+	///	<summary>
+	///		Flag indicating this DataArray has a FillValue.
+	///	</summary>
+	bool m_fHasFillValue;
+
+	///	<summary>
+	///		FillValue.
+	///	</summary>
+	T m_dFillValue;
+
+	///	<summary>
+	///		Units of the data stored in the DataArray1D.
+	///	</summary>
+	std::string m_strUnits;
 
 	///	<summary>
 	///		A pointer to the data for this DataArray1D.
