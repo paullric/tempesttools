@@ -27,6 +27,8 @@
 #include <set>
 #include <queue>
 #include <fstream>
+#include <ctime>
+#include <cstdlib>
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -36,6 +38,7 @@ int main(int argc, char** argv) {
 	NcError error(NcError::silent_nonfatal);
 
 try {
+	std::srand(std::time({}));
 
 	// Input data file
 	std::string strInputData;
@@ -58,6 +61,9 @@ try {
 	// Regional data
 	bool fRegional;
 
+	// Debug
+	bool fDebug;
+
 	// Name of latitude dimension
 	std::string strLatitudeName;
 
@@ -72,6 +78,7 @@ try {
 		CommandLineString(strVariable, "var", "");
 		CommandLineDoubleD(dDistDeg, "dist", 1.0, "(degrees)");
 		CommandLineBool(fRegional, "regional");
+		CommandLineBool(fDebug, "debug");
 
 		CommandLineString(strLongitudeName, "lonname", "lon");
 		CommandLineString(strLatitudeName, "latname", "lat");
@@ -133,6 +140,9 @@ try {
 		}
 	}
 
+	// A random point to use for debugging
+	int iDebugIx;
+
 	// The SimpleGrid used in this calculation
 	SimpleGrid grid;
 
@@ -161,6 +171,8 @@ try {
 	std::vector< Eigen::Matrix<float, 5, 1> > vecematXTy;
 
 	// Populate the matrices used for linear regression
+	AnnounceStartBlock("Populating linear regression matrices");
+
 	for (size_t f = 0; f < vecInputFiles.size(); f++) {
 
 		// Parse the input files on this line
@@ -174,6 +186,7 @@ try {
 			if (strConnectivity != "") {
 				AnnounceStartBlock("Generating grid information from connectivity file");
 				grid.FromFile(strConnectivity);
+				Announce("Total grid point count: %lu", grid.GetSize());
 				AnnounceEndBlock("Done");
 
 			// Try generating grid information from data file
@@ -188,6 +201,13 @@ try {
 					fRegional,
 					false);
 
+				if (grid.DimCount() == 1) {
+					Announce("Total grid point count: %lu", grid.GetSize());
+				} else {
+					Announce("Total grid point count: %lu (%lu %lu)",
+						grid.GetSize(), grid.m_nGridDim[0], grid.m_nGridDim[1]);
+				}
+
 				if (grid.m_nGridDim.size() != 2) {
 					_EXCEPTIONT("Logic error when generating connectivity");
 				}
@@ -196,10 +216,30 @@ try {
 			// Grid size
 			sGridSize = grid.GetSize();
 
+			if (fDebug) {
+				iDebugIx = std::rand() % sGridSize;
+				if (grid.DimCount() == 1) {
+					Announce("DEBUG point %i (lon: %f lat: %f)",
+						iDebugIx,
+						RadToDeg(grid.m_dLon[iDebugIx]),
+						RadToDeg(grid.m_dLat[iDebugIx]));
+				} else {
+					Announce("Debugging point %i (i: %i j: %i) (lon: %f lat: %f)",
+						iDebugIx,
+						iDebugIx % grid.m_nGridDim[1],
+						iDebugIx / grid.m_nGridDim[1],
+						RadToDeg(grid.m_dLon[iDebugIx]),
+						RadToDeg(grid.m_dLat[iDebugIx]));
+				}
+			}
+
 			// Generate the kd-tree
+			AnnounceStartBlock("Building KD tree");
 			grid.BuildKDTree();
+			AnnounceEndBlock("Done");
 
 			// Initialize the sample coordinates
+			AnnounceStartBlock("Sampling KD tree");
 			ipts.resize(sGridSize);
 			for (size_t i = 0; i < sGridSize; i++) {
 				ipts[i].resize(4);
@@ -212,6 +252,28 @@ try {
 				ipts[i][2] = grid.NearestNode(dLonRad0 - dDistRad, dLatRad0           );
 				ipts[i][3] = grid.NearestNode(dLonRad0           , dLatRad0 - dDistRad);
 			}
+			AnnounceEndBlock("Done");
+
+			// Output debug info
+			if (fDebug) {
+				AnnounceStartBlock("DEBUG NEIGHBORS:");
+				for (int j = 0; j < 4; j++) {
+					if (grid.DimCount() == 1) {
+						Announce("Neighbor i: %i j: %i # lon: %f lat %f",
+							ipts[iDebugIx][j],
+							RadToDeg(grid.m_dLon[ipts[iDebugIx][j]]),
+							RadToDeg(grid.m_dLat[ipts[iDebugIx][j]]));
+					} else {
+						Announce("Neighbor %i (i: %i j: %i) (lon: %f lat: %f)",
+							ipts[iDebugIx][j],
+							ipts[iDebugIx][j] % grid.m_nGridDim[1],
+							ipts[iDebugIx][j] / grid.m_nGridDim[1],
+							RadToDeg(grid.m_dLon[ipts[iDebugIx][j]]),
+							RadToDeg(grid.m_dLat[ipts[iDebugIx][j]]));
+					}
+				}
+				AnnounceEndBlock(NULL);
+			}
 
 			// Initialize the results array
 			dResults.resize(sGridSize, 0.0);
@@ -221,6 +283,15 @@ try {
 
 			// Initialize the TSS array
 			dTSS.resize(sGridSize, 0.0);
+
+			// Resize array of coefficient matrices and vectors
+			vecematXTX.resize(sGridSize);
+			vecematXTy.resize(sGridSize);
+
+			for (size_t i = 0; i < sGridSize; i++) {
+				vecematXTX[i].setZero();
+				vecematXTy[i].setZero();
+			}
 		}
 
 		// Read the time data
@@ -231,6 +302,11 @@ try {
 
 		// Loop through all times
 		for (size_t t = 0; t < vecTimes.size(); t++) {
+
+			// Output time
+			if (t % (vecTimes.size() / 20) == 0) {
+				Announce(vecTimes[t].ToString().c_str());
+			}
 
 			// Load the search variable data
 			vecFiles.SetTime(vecTimes[t]);
@@ -244,6 +320,22 @@ try {
 				float x1i = dataState[ipts[i][1]];
 				float x2i = dataState[ipts[i][2]];
 				float x3i = dataState[ipts[i][3]];
+
+				if (std::isnan(yi) || (dataState.HasFillValue() && (yi == dataState.GetFillValue()))) {
+					yi = static_cast<float>(rand() % 1000) / 1000.0;
+				}
+				if (std::isnan(x0i) || (dataState.HasFillValue() && (x0i == dataState.GetFillValue()))) {
+					x0i = static_cast<float>(rand() % 1000) / 1000.0;
+				}
+				if (std::isnan(x1i) || (dataState.HasFillValue() && (x1i == dataState.GetFillValue()))) {
+					x1i = static_cast<float>(rand() % 1000) / 1000.0;
+				}
+				if (std::isnan(x2i) || (dataState.HasFillValue() && (x2i == dataState.GetFillValue()))) {
+					x2i = static_cast<float>(rand() % 1000) / 1000.0;
+				}
+				if (std::isnan(x3i) || (dataState.HasFillValue() && (x3i == dataState.GetFillValue()))) {
+					x3i = static_cast<float>(rand() % 1000) / 1000.0;
+				}
 
 				vecematXTX[i](0, 1) += x0i;
 				vecematXTX[i](0, 2) += x1i;
@@ -273,7 +365,11 @@ try {
 		}
 	}
 
+	AnnounceEndBlock("Done");
+
 	// Solve the linear regression system
+	AnnounceStartBlock("Solving linear regression systems");
+
 	for (size_t i = 0; i < sGridSize; i++) {
 
 		// Symmetrize the matrix
@@ -295,6 +391,15 @@ try {
 
 		dMeanState[i] = vecematXTy[i](0) / static_cast<float>(sTotalTimes);
 
+		// Output debug information
+		if (fDebug && (i == iDebugIx)) {
+			Announce("DEBUG Mean State at debug point: %f", dMeanState[iDebugIx]);
+			Announce("DEBUG XTX Matrix:");
+			std::cout << vecematXTX[iDebugIx] << std::endl;
+			Announce("DEBUG XTy Vector:");
+			std::cout << vecematXTy[iDebugIx] << std::endl;
+		}
+
 		// Solve the matrix
 		Eigen::LLT< Eigen::Matrix<float,5,5> > llt(vecematXTX[i]);
 		if (llt.info() != Eigen::Success) {
@@ -304,10 +409,20 @@ try {
 			Eigen::Matrix<float, 5, 1> ematResult = llt.solve(vecematXTy[i]);
 			vecematXTy[i] = ematResult;
 		}
+
+		// Output debug information
+		if (fDebug && (i == iDebugIx)) {
+			Announce("DEBUG Beta Coefficients:");
+			std::cout << vecematXTy[iDebugIx] << std::endl;
+		}
 	}
+
+	AnnounceEndBlock("Done");
 
 	// Calculate explained sum of squares and total sum of squares and
 	// store in dResults and dTSS respectively
+	AnnounceStartBlock("Calculating R2");
+
 	for (size_t f = 0; f < vecInputFiles.size(); f++) {
 
 		// Parse the input files on this line
@@ -318,6 +433,11 @@ try {
 		const NcTimeDimension & vecTimes = vecFiles.GetNcTimeDimension(0);
 
 		for (size_t t = 0; t < vecTimes.size(); t++) {
+
+			// Output time
+			if (t % (vecTimes.size() / 20) == 0) {
+				Announce(vecTimes[t].ToString().c_str());
+			}
 
 			// Load the search variable data
 			vecFiles.SetTime(vecTimes[t]);
@@ -331,6 +451,22 @@ try {
 					float x1i = dataState[ipts[i][1]];
 					float x2i = dataState[ipts[i][2]];
 					float x3i = dataState[ipts[i][3]];
+
+					if (std::isnan(yi) || (dataState.HasFillValue() && (yi == dataState.GetFillValue()))) {
+						yi = static_cast<float>(rand() % 1000) / 1000.0;
+					}
+					if (std::isnan(x0i) || (dataState.HasFillValue() && (x0i == dataState.GetFillValue()))) {
+						x0i = static_cast<float>(rand() % 1000) / 1000.0;
+					}
+					if (std::isnan(x1i) || (dataState.HasFillValue() && (x1i == dataState.GetFillValue()))) {
+						x1i = static_cast<float>(rand() % 1000) / 1000.0;
+					}
+					if (std::isnan(x2i) || (dataState.HasFillValue() && (x2i == dataState.GetFillValue()))) {
+						x2i = static_cast<float>(rand() % 1000) / 1000.0;
+					}
+					if (std::isnan(x3i) || (dataState.HasFillValue() && (x3i == dataState.GetFillValue()))) {
+						x3i = static_cast<float>(rand() % 1000) / 1000.0;
+					}
 
 					float dHatYi =
 						vecematXTy[i](0)
@@ -354,7 +490,16 @@ try {
 		dResults[i] /= dTSS[i];
 	}
 
+	// Output debug information
+	if (fDebug) {
+		Announce("DEBUG R2: %f", dResults[iDebugIx]);
+	}
+
+	AnnounceEndBlock("Done");
+
 	// Write results
+	AnnounceStartBlock("Writing Results");
+
 	{
 		// Parse the input files on this line
 		NcFileVector vecFiles;
@@ -362,7 +507,7 @@ try {
 
 		NcFile & ncinfile = *(vecFiles[0]);
 
-		NcFile ncoutfile(strOutputData.c_str(), NcFile::Write);
+		NcFile ncoutfile(strOutputData.c_str(), NcFile::Replace);
 		if (!ncoutfile.is_valid()) {
 			_EXCEPTION1("Unable to open output datafile \"%s\"",
 				strOutputData.c_str());
@@ -403,6 +548,9 @@ try {
 			_EXCEPTIONT("Only 1D or 2D spatial data supported");
 		}
 	}
+
+	AnnounceEndBlock("Done");
+	AnnounceBanner();
 
 } catch(Exception & e) {
 	Announce(e.ToString().c_str());
